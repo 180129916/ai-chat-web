@@ -98,7 +98,7 @@ composer.addEventListener("submit", (event) => {
 
 messageInput.addEventListener("input", () => {
   autoResizeInput();
-  sendButton.disabled = !messageInput.value.trim() || isResponding;
+  sendButton.disabled = !isResponding && !messageInput.value.trim();
 });
 
 messageInput.addEventListener("keydown", (event) => {
@@ -302,10 +302,8 @@ async function streamResponse(chat) {
   } finally {
     isResponding = false;
     abortController = null;
-    sendButton.disabled = !messageInput.value.trim();
     saveState();
-    renderChatList();
-    renderMessages(isNearBottom());
+    render();
   }
 }
 
@@ -418,7 +416,7 @@ function typeIntro(chat, reply) {
       chat.messages[0].content = reply;
       window.clearInterval(timer);
       isResponding = false;
-      sendButton.disabled = !messageInput.value.trim();
+      sendButton.disabled = !messageInput.value.trim() && !isResponding;
       renderMessages(isNearBottom());
     }
   }, 22);
@@ -429,7 +427,7 @@ function typeIntro(chat, reply) {
 function render() {
   renderChatList();
   renderMessages();
-  sendButton.disabled = !messageInput.value.trim() || isResponding;
+  sendButton.disabled = !isResponding && !messageInput.value.trim();
   sendButton.classList.toggle("is-stop", isResponding);
   sendButton.textContent = isResponding ? "■" : "↑";
 }
