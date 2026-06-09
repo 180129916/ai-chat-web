@@ -234,6 +234,10 @@ async function sendMessage(text) {
   saveState();
   render();
 
+  await streamResponse(chat);
+}
+
+async function streamResponse(chat) {
   const payload = chat.messages.map((m) => ({ role: m.role, content: m.content }));
   const assistantMessage = { role: "assistant", content: "" };
   chat.messages.push(assistantMessage);
@@ -509,10 +513,84 @@ function createMessageElement(message) {
   const wrapper = document.createElement("article");
   wrapper.className = `message ${message.role}`;
   const avatarText = message.role === "user" ? "U" : "AI";
-  wrapper.innerHTML = `<div class="avatar">${avatarText}</div><div class="bubble rich-text">${renderRichContent(message.content)}</div>`;
+    const isUser = message.role === "user";
+  const actionsHtml = isUser
+    ? `<div class="msg-actions"><button class="msg-action" data-action="edit">编辑</button><button class="msg-action" data-action="delete">删除</button></div>`
+    : `<div class="msg-actions"><button class="msg-action" data-action="regenerate">重新生成</button><button class="msg-action" data-action="delete">删除</button></div>`;
+  wrapper.innerHTML = `<div class="avatar">${avatarText}</div><div class="bubble rich-text">${renderRichContent(message.content)}${actionsHtml}</div>`;
   return wrapper;
 }
 
+
+// ── Message actions ──
+
+messages.addEventListener("click", (event) => {
+  const actionBtn = event.target.closest(".msg-action");
+  if (!actionBtn || isResponding) return;
+
+  const messageEl = actionBtn.closest(".message");
+  if (!messageEl) return;
+
+  const chat = getActiveChat();
+  const msgIdx = [...messages.children].indexOf(messageEl);
+  if (msgIdx < 0 || msgIdx >= chat.messages.length) return;
+
+  const action = actionBtn.dataset.action;
+
+  if (action === "delete") {
+    chat.messages.splice(msgIdx, 1);
+    saveState();
+    render();
+  } else if (action === "edit") {
+    startEditMessage(chat, msgIdx);
+  } else if (action === "regenerate") {
+    regenerateAnswer(chat, msgIdx);
+  }
+});
+
+function startEditMessage(chat, msgIdx) {
+  const message = chat.messages[msgIdx];
+  if (message.role !== "user") return;
+
+  const messageEl = messages.children[msgIdx];
+  const bubble = messageEl.querySelector(".bubble");
+  const originalHtml = bubble.innerHTML;
+
+  bubble.innerHTML = `<textarea class="edit-textarea">${escapeHtml(message.content)}</textarea><div class="edit-actions"><button class="msg-action edit-save">保存</button><button class="msg-action edit-cancel">取消</button></div>`;
+  const textarea = bubble.querySelector(".edit-textarea");
+  textarea.focus();
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+  const save = () => {
+    const newText = textarea.value.trim();
+    if (!newText) return;
+    message.content = newText;
+    // Remove all messages after this one, then regenerate
+    chat.messages.splice(msgIdx + 1);
+    saveState();
+    render();
+    streamResponse(chat);
+  };
+
+  const cancel = () => {
+    bubble.innerHTML = originalHtml;
+  };
+
+  bubble.querySelector(".edit-save").addEventListener("click", save);
+  bubble.querySelector(".edit-cancel").addEventListener("click", cancel);
+  textarea.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); save(); }
+    if (e.key === "Escape") cancel();
+  });
+}
+
+function regenerateAnswer(chat, msgIdx) {
+  // Remove from this assistant message onward
+  chat.messages.splice(msgIdx);
+  saveState();
+  render();
+  streamResponse(chat);
+}
 function addCodeCopyButtons() {
   messages.querySelectorAll(".bubble pre").forEach((pre) => {
     if (pre.parentElement.classList.contains("code-block")) return;
