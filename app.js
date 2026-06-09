@@ -61,6 +61,11 @@ const baseUrlInput = document.querySelector("#baseUrlInput");
 const systemPromptInput = document.querySelector("#systemPromptInput");
 const testSettingsButton = document.querySelector("#testSettingsButton");
 const settingsStatus = document.querySelector("#settingsStatus");
+const profileButton = document.querySelector("#profileButton");
+
+profileButton.addEventListener("click", () => {
+  window.open("https://weekendblog.top/", "_blank", "noopener");
+});
 const themeSwitcher = document.querySelector("#themeSwitcher");
 
 initTheme();
@@ -158,6 +163,7 @@ settingsButton.addEventListener("click", () => {
   settingsModal.classList.add("open");
   settingsModal.setAttribute("aria-hidden", "false");
 });
+
 
 closeSettings.addEventListener("click", closeSettingsModal);
 settingsModal.addEventListener("click", (event) => {
