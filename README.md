@@ -36,6 +36,8 @@ node server.js
 
 启动后浏览器打开 [http://127.0.0.1:4174](http://127.0.0.1:4174)。
 
+![聊天](https://github.com/180129916/ai-chat-web/blob/master/weekend002.png)
+
 首次使用请在页面右上角点击 **设置**，填写 API Key 和模型信息后保存。
 
 ## 详细部署指南
@@ -132,6 +134,8 @@ docker run -d -p 4174:4174 --env-file .env ai-chat-web
 ```
 
 ## 自定义配置模型
+
+![设置](https://github.com/180129916/ai-chat-web/blob/master/weekend003.png)
 
 ### 支持的模型商
 
