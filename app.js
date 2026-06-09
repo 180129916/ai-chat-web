@@ -34,6 +34,7 @@ let activeChatId = state.activeChatId || state.chats[0].id;
 let isResponding = false;
 var introTyped = false;
 var userScrolledUp = false;
+var abortController = null;
 
 const sidebar = document.querySelector("#sidebar");
 const chatList = document.querySelector("#chatList");
@@ -92,7 +93,7 @@ fillSettingsForm();
 
 composer.addEventListener("submit", (event) => {
   event.preventDefault();
-  sendMessage(messageInput.value.trim());
+  if (!isResponding) sendMessage(messageInput.value.trim());
 });
 
 messageInput.addEventListener("input", () => {
@@ -101,7 +102,10 @@ messageInput.addEventListener("input", () => {
 });
 
 messageInput.addEventListener("keydown", (event) => {
-  if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); composer.requestSubmit(); }
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    composer.requestSubmit();
+  }
 });
 
 newChatButton.addEventListener("click", () => {
@@ -197,6 +201,111 @@ document.querySelectorAll(".tool-button").forEach((button) => {
   });
 });
 
+// ── Stop generation ──
+
+sendButton.addEventListener("click", (event) => {
+  if (isResponding) {
+    event.preventDefault();
+    stopGeneration();
+  }
+});
+
+function stopGeneration() {
+  if (abortController) {
+    abortController.abort();
+    abortController = null;
+  }
+}
+
+// ── Streaming send ──
+
+async function sendMessage(text) {
+  if (!text || isResponding) return;
+
+  const chat = getActiveChat();
+  chat.messages.push({ role: "user", content: text });
+  if (chat.title === "新对话" || chat.title === "欢迎使用 WeekendAI")
+    chat.title = text.slice(0, 22);
+
+  messageInput.value = "";
+  autoResizeInput();
+  isResponding = true;
+  userScrolledUp = false;
+  saveState();
+  render();
+
+  const payload = chat.messages.map((m) => ({ role: m.role, content: m.content }));
+  const assistantMessage = { role: "assistant", content: "" };
+  chat.messages.push(assistantMessage);
+  renderMessages();
+
+  abortController = new AbortController();
+
+  try {
+    const response = await fetch("/api/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ settings: apiSettings, messages: payload }),
+      signal: abortController.signal,
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `请求失败（${response.status}）`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const payload = trimmed.slice(5).trim();
+
+        try {
+          const event = JSON.parse(payload);
+          if (event.token) {
+            assistantMessage.content += event.token;
+            const stick = !userScrolledUp && isNearBottom();
+            renderMessages(stick);
+          } else if (event.error) {
+            throw new Error(event.error);
+          }
+          // event.done is handled after the loop
+        } catch (e) {
+          if (e.message !== event?.error) throw e;
+        }
+      }
+    }
+  } catch (error) {
+    if (error.name === "AbortError") {
+      if (!assistantMessage.content) {
+        assistantMessage.content = "已停止生成。";
+      }
+    } else {
+      assistantMessage.content = `请求失败：${error.message}`;
+    }
+  } finally {
+    isResponding = false;
+    abortController = null;
+    sendButton.disabled = !messageInput.value.trim();
+    saveState();
+    renderChatList();
+    renderMessages(isNearBottom());
+  }
+}
+
+// ── Data ──
+
 function loadState() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
@@ -208,7 +317,8 @@ function loadState() {
 function loadApiSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY));
-    if (saved?.provider && providerPresets[saved.provider]) return { ...defaultApiSettings(saved.provider), ...saved };
+    if (saved?.provider && providerPresets[saved.provider])
+      return { ...defaultApiSettings(saved.provider), ...saved };
   } catch { localStorage.removeItem(SETTINGS_KEY); }
   return defaultApiSettings("openai");
 }
@@ -223,7 +333,10 @@ function saveApiSettings() {
 
 function defaultApiSettings(provider) {
   const preset = providerPresets[provider];
-  return { provider, apiKey: "", model: preset.model, baseUrl: preset.baseUrl, systemPrompt: "你是一个专业、直接、可靠的中文 AI 助手。回答要准确、可执行；不确定时明确说明。" };
+  return {
+    provider, apiKey: "", model: preset.model, baseUrl: preset.baseUrl,
+    systemPrompt: "你是一个专业、直接、可靠的中文 AI 助手。回答要准确、可执行；不确定时明确说明。",
+  };
 }
 
 function fillSettingsForm() {
@@ -237,7 +350,12 @@ function fillSettingsForm() {
 function readSettingsForm() {
   const provider = providerSelect.value;
   const preset = providerPresets[provider];
-  return { provider, apiKey: apiKeyInput.value.trim(), model: modelInput.value.trim() || preset.model, baseUrl: baseUrlInput.value.trim() || preset.baseUrl, systemPrompt: systemPromptInput.value.trim() || defaultApiSettings(provider).systemPrompt };
+  return {
+    provider, apiKey: apiKeyInput.value.trim(),
+    model: modelInput.value.trim() || preset.model,
+    baseUrl: baseUrlInput.value.trim() || preset.baseUrl,
+    systemPrompt: systemPromptInput.value.trim() || defaultApiSettings(provider).systemPrompt,
+  };
 }
 
 function renderModelSelect() {
@@ -282,42 +400,7 @@ function getActiveChat() {
   return state.chats.find((chat) => chat.id === activeChatId) || state.chats[0];
 }
 
-async function sendMessage(text) {
-  if (!text || isResponding) return;
-  const chat = getActiveChat();
-  chat.messages.push({ role: "user", content: text });
-  if (chat.title === "新对话" || chat.title === "欢迎使用 WeekendAI") chat.title = text.slice(0, 22);
-  messageInput.value = "";
-  autoResizeInput();
-  isResponding = true;
-  saveState();
-  userScrolledUp = false;
-  render();
-  showTyping();
-  try {
-    const reply = await requestModelReply(chat.messages);
-    removeTyping();
-    typeAssistantReply(chat, reply);
-  } catch (error) {
-    removeTyping();
-    chat.messages.push({ role: "assistant", content: `请求真实 AI 失败：${error.message}` });
-    isResponding = false;
-    saveState();
-    render();
-  }
-}
-
-async function requestModelReply(chatMessages) {
-  const response = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ settings: apiSettings, messages: chatMessages.map((m) => ({ role: m.role, content: m.content })) }),
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "后端接口请求失败");
-  if (!data.reply) throw new Error("模型没有返回文本内容");
-  return data.reply;
-}
+// ── Intro typewriter (local-only welcome, no API call) ──
 
 function typeIntro(chat, reply) {
   var i = 0;
@@ -336,32 +419,14 @@ function typeIntro(chat, reply) {
   }, 22);
 }
 
-function typeAssistantReply(chat, reply) {
-  const assistantMessage = { role: "assistant", content: "" };
-  chat.messages.push(assistantMessage);
-  renderMessages();
-  let index = 0;
-  const timer = window.setInterval(() => {
-    const shouldStickToBottom = !userScrolledUp && isNearBottom();
-    assistantMessage.content = reply.slice(0, index);
-    renderMessages(shouldStickToBottom);
-    index += 3;
-    if (index > reply.length) {
-      assistantMessage.content = reply;
-      window.clearInterval(timer);
-      isResponding = false;
-      sendButton.disabled = !messageInput.value.trim();
-      saveState();
-      renderChatList();
-      renderMessages(isNearBottom());
-    }
-  }, 18);
-}
+// ── Rendering ──
 
 function render() {
   renderChatList();
   renderMessages();
   sendButton.disabled = !messageInput.value.trim() || isResponding;
+  sendButton.classList.toggle("is-stop", isResponding);
+  sendButton.textContent = isResponding ? "■" : "↑";
 }
 
 function renderChatList() {
@@ -432,6 +497,8 @@ function renderMessages(stickToBottom) {
     chat.messages[0].content = _introFull;
     introTyped = true;
     isResponding = true;
+    sendButton.classList.toggle("is-stop", true);
+    sendButton.textContent = "■";
     typeIntro(chat, _introFull);
   }
 }
@@ -477,15 +544,20 @@ function formatTime(timestamp) {
 }
 
 function escapeHtml(value) {
-  return value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" })[char]);
+  return value.replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;",
+  })[char]);
 }
+
+// ── Markdown rendering ──
 
 if (typeof marked !== "undefined") marked.setOptions({ breaks: true, gfm: true });
 
 function renderRichContent(source) {
   if (!source) return "";
   const text = String(source).replace(/\r\n/g, "\n");
-  if (/^\s*<(!doctype|html|head|body|div|table|form|article|section|main|nav|header|footer|aside|figure|details|dialog|fieldset)[\s>]/i.test(text) && /<\/[a-z][a-z0-9]*>/i.test(text)) return sanitizeHtml(text);
+  if (/^\s*<(!doctype|html|head|body|div|table|form|article|section|main|nav|header|footer|aside|figure|details|dialog|fieldset)[\s>]/i.test(text) && /<\/[a-z][a-z0-9]*>/i.test(text))
+    return sanitizeHtml(text);
   let html;
   if (typeof marked !== "undefined") {
     try { html = marked.parse(text); } catch { html = "<p>" + escapeHtml(text) + "</p>"; }

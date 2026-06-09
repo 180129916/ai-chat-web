@@ -62,13 +62,18 @@ const mimeTypes = {
 
 const server = http.createServer(async (req, res) => {
   try {
-    if (req.method === "POST" && req.url === "/api/chat") {
-      await handleChat(req, res);
+    if (req.method === "POST" && req.url === "/api/chat/stream") {
+      await handleChatStream(req, res);
       return;
     }
 
     if (req.method === "POST" && req.url === "/api/chat/test") {
       await handleChat(req, res, true);
+      return;
+    }
+
+    if (req.method === "POST" && req.url === "/api/chat") {
+      await handleChat(req, res);
       return;
     }
 
@@ -88,6 +93,8 @@ server.listen(PORT, "127.0.0.1", () => {
   console.log(`AI Chat Web running at http://127.0.0.1:${PORT}`);
 });
 
+// ── Non-streaming (test / fallback) ──
+
 async function handleChat(req, res, isTest = false) {
   const body = await readJson(req);
   const settings = normalizeSettings(body.settings || {});
@@ -101,9 +108,7 @@ async function handleChat(req, res, isTest = false) {
   }
 
   if (!settings.apiKey) {
-    sendJson(res, 400, {
-      error: "请先在设置里填写 API Key。",
-    });
+    sendJson(res, 400, { error: "请先在设置里填写 API Key。" });
     return;
   }
 
@@ -115,21 +120,262 @@ async function callProvider(settings, messages) {
   if (settings.provider === "openai") {
     return callOpenAIResponses(settings, messages);
   }
-
   if (isOpenAICompatibleProvider(settings.provider)) {
     return callOpenAICompatible(settings, messages);
   }
-
   if (settings.provider === "anthropic") {
     return callAnthropic(settings, messages);
   }
-
   if (settings.provider === "gemini") {
     return callGemini(settings, messages);
   }
-
   throw new Error("Unsupported provider");
 }
+
+// ── SSE Streaming ──
+
+async function handleChatStream(req, res) {
+  const body = await readJson(req);
+  const settings = normalizeSettings(body.settings || {});
+  const messages = normalizeMessages(body.messages);
+
+  if (!messages.length) {
+    sendJson(res, 400, { error: "No messages provided" });
+    return;
+  }
+
+  if (!settings.apiKey) {
+    sendJson(res, 400, { error: "请先在设置里填写 API Key。" });
+    return;
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+  });
+
+  const send = (data) => {
+    if (res.writableEnded) return;
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  try {
+    const finishEvent = await callProviderStream(settings, messages, send);
+    send({ done: true, ...finishEvent });
+  } catch (error) {
+    send({ error: error.message || "Stream error" });
+  } finally {
+    if (!res.writableEnded) res.end();
+  }
+}
+
+async function callProviderStream(settings, messages, send) {
+  if (settings.provider === "openai") {
+    return await streamOpenAIResponses(settings, messages, send);
+  }
+  if (isOpenAICompatibleProvider(settings.provider)) {
+    return await streamOpenAICompatible(settings, messages, send);
+  }
+  if (settings.provider === "anthropic") {
+    return await streamAnthropic(settings, messages, send);
+  }
+  if (settings.provider === "gemini") {
+    return await streamGemini(settings, messages, send);
+  }
+  throw new Error("Unsupported provider");
+}
+
+// ── SSE parser helper ──
+
+async function relayUpstreamStream(response, parseToken, send) {
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    let msg = `Upstream ${response.status}`;
+    try { msg = JSON.parse(text).error?.message || msg; } catch {}
+    throw new Error(msg);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let modelName = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      const payload = trimmed.slice(5).trim();
+      if (payload === "[DONE]") continue;
+
+      try {
+        const event = JSON.parse(payload);
+        const token = parseToken(event);
+        if (token) send({ token });
+        if (event.model) modelName = event.model;
+      } catch {
+        // skip unparseable lines
+      }
+    }
+  }
+
+  return { model: modelName };
+}
+
+// ── Provider streaming implementations ──
+
+async function streamOpenAIResponses(settings, messages, send) {
+  const response = await fetch(`${trimSlash(settings.baseUrl)}/responses`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${settings.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: settings.model,
+      stream: true,
+      input: [
+        { role: "system", content: settings.systemPrompt },
+        ...messages,
+      ],
+    }),
+  });
+
+  return await relayUpstreamStream(
+    response,
+    (event) => {
+      if (event.type === "response.output_text.delta") return event.delta;
+      return null;
+    },
+    send,
+  );
+}
+
+async function streamOpenAICompatible(settings, messages, send) {
+  const response = await fetch(`${trimSlash(settings.baseUrl)}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${settings.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: settings.model,
+      messages: [{ role: "system", content: settings.systemPrompt }, ...messages],
+      temperature: 0.7,
+      stream: true,
+    }),
+  });
+
+  return await relayUpstreamStream(
+    response,
+    (event) => event.choices?.[0]?.delta?.content || null,
+    send,
+  );
+}
+
+async function streamAnthropic(settings, messages, send) {
+  const response = await fetch(`${trimSlash(settings.baseUrl)}/v1/messages`, {
+    method: "POST",
+    headers: {
+      "x-api-key": settings.apiKey,
+      "anthropic-version": "2023-06-01",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: settings.model,
+      system: settings.systemPrompt,
+      max_tokens: 4096,
+      messages,
+      stream: true,
+    }),
+  });
+
+  return await relayUpstreamStream(
+    response,
+    (event) => {
+      if (event.type === "content_block_delta") return event.delta?.text || null;
+      return null;
+    },
+    send,
+  );
+}
+
+async function streamGemini(settings, messages, send) {
+  // Gemini returns full text in each SSE event, not deltas — track sent text.
+  let sent = "";
+
+  const response = await fetch(
+    `${trimSlash(settings.baseUrl)}/models/${encodeURIComponent(settings.model)}:streamGenerateContent?alt=sse`,
+    {
+      method: "POST",
+      headers: {
+        "x-goog-api-key": settings.apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [{ text: settings.systemPrompt }],
+        },
+        contents: messages.map((message) => ({
+          role: message.role === "assistant" ? "model" : "user",
+          parts: [{ text: message.content }],
+        })),
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    let msg = `Gemini ${response.status}`;
+    try { msg = JSON.parse(text).error?.message || msg; } catch {}
+    throw new Error(msg);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      const payload = trimmed.slice(5).trim();
+
+      try {
+        const event = JSON.parse(payload);
+        const fullText = event.candidates?.[0]?.content?.parts
+          ?.map((p) => p.text)
+          ?.filter(Boolean)
+          ?.join("") || "";
+
+        const delta = fullText.slice(sent.length);
+        sent = fullText;
+        if (delta) send({ token: delta });
+      } catch {
+        // skip
+      }
+    }
+  }
+
+  return { model: settings.model };
+}
+
+// ── Non-streaming provider calls (kept for test endpoint) ──
 
 async function callOpenAIResponses(settings, messages) {
   const response = await fetch(`${trimSlash(settings.baseUrl)}/responses`, {
@@ -141,17 +387,13 @@ async function callOpenAIResponses(settings, messages) {
     body: JSON.stringify({
       model: settings.model,
       input: [
-        {
-          role: "system",
-          content: settings.systemPrompt,
-        },
+        { role: "system", content: settings.systemPrompt },
         ...messages,
       ],
     }),
   });
 
   const data = await response.json().catch(() => ({}));
-
   if (!response.ok) {
     throw new ProviderError(data.error?.message || "OpenAI API request failed", response.status);
   }
@@ -177,7 +419,6 @@ async function callOpenAICompatible(settings, messages) {
   });
 
   const data = await response.json().catch(() => ({}));
-
   if (!response.ok) {
     throw new ProviderError(data.error?.message || "OpenAI-compatible API request failed", response.status);
   }
@@ -205,14 +446,12 @@ async function callAnthropic(settings, messages) {
   });
 
   const data = await response.json().catch(() => ({}));
-
   if (!response.ok) {
     throw new ProviderError(data.error?.message || "Anthropic API request failed", response.status);
   }
 
   return {
-    reply:
-      data.content
+    reply: data.content
         ?.filter((item) => item.type === "text" && item.text)
         ?.map((item) => item.text)
         ?.join("\n") || "模型返回了空内容。",
@@ -242,20 +481,20 @@ async function callGemini(settings, messages) {
   );
 
   const data = await response.json().catch(() => ({}));
-
   if (!response.ok) {
     throw new ProviderError(data.error?.message || "Gemini API request failed", response.status);
   }
 
   return {
-    reply:
-      data.candidates?.[0]?.content?.parts
+    reply: data.candidates?.[0]?.content?.parts
         ?.map((part) => part.text)
         ?.filter(Boolean)
         ?.join("\n") || "模型返回了空内容。",
     model: settings.model,
   };
 }
+
+// ── Static serving ──
 
 async function serveStatic(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -278,11 +517,10 @@ async function serveStatic(req, res) {
   }
 }
 
-function normalizeMessages(messages) {
-  if (!Array.isArray(messages)) {
-    return [];
-  }
+// ── Helpers ──
 
+function normalizeMessages(messages) {
+  if (!Array.isArray(messages)) return [];
   return messages
     .filter((message) => message?.content && ["user", "assistant"].includes(message.role))
     .slice(-20)
@@ -295,7 +533,6 @@ function normalizeMessages(messages) {
 function normalizeSettings(settings) {
   const provider = providerDefaults[settings.provider] ? settings.provider : "openai";
   const defaults = providerDefaults[provider];
-
   return {
     provider,
     apiKey: String(settings.apiKey || getEnvApiKey(provider) || "").trim(),
@@ -330,21 +567,18 @@ function extractResponseText(data) {
   if (typeof data.output_text === "string" && data.output_text.trim()) {
     return data.output_text;
   }
-
   const text = data.output
     ?.flatMap((item) => item.content || [])
     ?.filter((content) => content.type === "output_text" && content.text)
     ?.map((content) => content.text)
     ?.join("\n")
     ?.trim();
-
   return text || "模型返回了空内容。";
 }
 
 function readJson(req) {
   return new Promise((resolve, reject) => {
     let body = "";
-
     req.on("data", (chunk) => {
       body += chunk;
       if (body.length > 1024 * 1024) {
@@ -352,15 +586,10 @@ function readJson(req) {
         reject(new Error("Request body too large"));
       }
     });
-
     req.on("end", () => {
-      try {
-        resolve(JSON.parse(body || "{}"));
-      } catch (error) {
-        reject(error);
-      }
+      try { resolve(JSON.parse(body || "{}")); }
+      catch (error) { reject(error); }
     });
-
     req.on("error", reject);
   });
 }
@@ -383,23 +612,13 @@ class ProviderError extends Error {
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, ".env");
-
-  if (!fsSync.existsSync(envPath)) {
-    return;
-  }
-
+  if (!fsSync.existsSync(envPath)) return;
   const content = fsSync.readFileSync(envPath, "utf8");
   for (const line of content.split(/\r?\n/)) {
     const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-
+    if (!trimmed || trimmed.startsWith("#")) continue;
     const index = trimmed.indexOf("=");
-    if (index === -1) {
-      continue;
-    }
-
+    if (index === -1) continue;
     const key = trimmed.slice(0, index).trim();
     const value = trimmed.slice(index + 1).trim().replace(/^["']|["']$/g, "");
     if (key && !process.env[key]) {

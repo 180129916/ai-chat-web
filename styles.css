@@ -826,6 +826,16 @@ button {
   cursor: not-allowed;
   opacity: 0.35;
 }
+/* Stop button — red square during generation */
+.send-button.is-stop {
+  background: #ef4444;
+  font-size: 14px;
+  border-radius: 6px;
+}
+
+.send-button.is-stop:hover {
+  background: #dc2626;
+}
 
 .fine-print {
   margin: 8px 0 0;
