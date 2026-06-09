@@ -493,6 +493,8 @@ function renderMessages(stickToBottom) {
 
   if (stickToBottom) messages.scrollTop = messages.scrollHeight;
 
+  addCodeCopyButtons();
+
   if (_introFull) {
     chat.messages[0].content = _introFull;
     introTyped = true;
@@ -509,6 +511,31 @@ function createMessageElement(message) {
   const avatarText = message.role === "user" ? "U" : "AI";
   wrapper.innerHTML = `<div class="avatar">${avatarText}</div><div class="bubble rich-text">${renderRichContent(message.content)}</div>`;
   return wrapper;
+}
+
+function addCodeCopyButtons() {
+  messages.querySelectorAll(".bubble pre").forEach((pre) => {
+    if (pre.parentElement.classList.contains("code-block")) return;
+    const wrapper = document.createElement("div");
+    wrapper.className = "code-block";
+    const button = document.createElement("button");
+    button.className = "copy-button";
+    button.textContent = "复制";
+    button.addEventListener("click", async () => {
+      const text = pre.textContent || "";
+      try {
+        await navigator.clipboard.writeText(text);
+        button.textContent = "已复制";
+        setTimeout(() => { button.textContent = "复制"; }, 1800);
+      } catch {
+        button.textContent = "失败";
+        setTimeout(() => { button.textContent = "复制"; }, 1800);
+      }
+    });
+    pre.parentNode.insertBefore(wrapper, pre);
+    wrapper.appendChild(pre);
+    wrapper.appendChild(button);
+  });
 }
 
 function showTyping() {
