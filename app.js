@@ -42,6 +42,7 @@ const messages = document.querySelector("#messages");
 const composer = document.querySelector("#composer");
 const messageInput = document.querySelector("#messageInput");
 const sendButton = document.querySelector("#sendButton");
+const statusDot = document.querySelector(".status-dot");
 const searchInput = document.querySelector("#searchInput");
 const newChatButton = document.querySelector("#newChatButton");
 const clearChatsButton = document.querySelector("#clearChatsButton");
@@ -147,6 +148,8 @@ modelSelect.addEventListener("change", () => {
   apiSettings.model = modelSelect.value;
   saveApiSettings();
   fillSettingsForm();
+  setStatusDot("switching");
+  setTimeout(() => setStatusDot(isResponding ? "thinking" : "ready"), 600);
 });
 
 settingsButton.addEventListener("click", () => {
@@ -430,6 +433,12 @@ function render() {
   sendButton.disabled = !isResponding && !messageInput.value.trim();
   sendButton.classList.toggle("is-stop", isResponding);
   sendButton.textContent = isResponding ? "■" : "↑";
+  setStatusDot(isResponding ? "thinking" : "ready");
+}
+
+function setStatusDot(state) {
+  if (!statusDot) return;
+  statusDot.className = "status-dot " + state;
 }
 
 function renderChatList() {

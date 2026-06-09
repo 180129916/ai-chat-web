@@ -352,7 +352,33 @@ button {
   width: 7px;
   height: 7px;
   border-radius: 999px;
+  transition: background 200ms;
+}
+
+/* Ready — green */
+.status-dot.ready {
   background: #4ade80;
+}
+
+/* Thinking — amber pulse */
+.status-dot.thinking {
+  background: #f59e0b;
+  animation: dot-pulse 1.2s ease-in-out infinite;
+}
+
+/* Switching — brief flash */
+.status-dot.switching {
+  background: #f59e0b;
+}
+
+/* Error — red, static */
+.status-dot.error {
+  background: #ef4444;
+}
+
+@keyframes dot-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.3); }
 }
 
 .model-picker select {
