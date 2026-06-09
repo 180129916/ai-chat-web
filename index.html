@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WeekendAi</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" id="sidebar">
+        <div class="brand-row">
+          <button class="icon-button mobile-only" id="closeSidebar" aria-label="关闭侧边栏">×</button>
+          <div class="brand-mark">D</div>
+          <div>
+            <div class="brand-title">WeekendAi</div>
+            <div class="brand-subtitle">AI 对话</div>
+          </div>
+        </div>
+
+        <button class="new-chat" id="newChatButton">
+          <span>+</span>
+          新建对话
+        </button>
+
+        <label class="search-box" aria-label="搜索对话">
+          <span>⌕</span>
+          <input id="searchInput" type="search" placeholder="搜索对话" />
+        </label>
+
+        <nav class="chat-list" id="chatList" aria-label="对话历史"></nav>
+
+        <div class="sidebar-footer">
+          <button class="footer-button" id="clearChatsButton">清空历史</button>
+          <button class="footer-button" id="settingsButton">设置</button>
+        </div>
+      </aside>
+
+      <main class="chat-panel">
+        <header class="topbar">
+          <button class="icon-button mobile-only" id="openSidebar" aria-label="打开侧边栏">☰</button>
+          <div class="model-picker">
+            <span class="status-dot"></span>
+            <select id="modelSelect" aria-label="选择模型">
+              <option>加载设置中</option>
+            </select>
+          </div>
+          <div class="topbar-actions">
+            <div class="theme-switcher" id="themeSwitcher" role="radiogroup" aria-label="主题切换">
+              <button class="theme-option active" data-theme="light" role="radio" aria-checked="true">白</button>
+              <button class="theme-option" data-theme="dark" role="radio" aria-checked="false">暗</button>
+              <button class="theme-option" data-theme="system" role="radio" aria-checked="false">系统</button>
+            </div>
+            <button class="ghost-button" id="exportButton">导出</button>
+            <button class="profile-button" aria-label="用户">U</button>
+          </div>
+        </header>
+
+        <section class="messages" id="messages" aria-live="polite"></section>
+
+        <section class="composer-wrap">
+          <form class="composer" id="composer">
+            <textarea
+              id="messageInput"
+              rows="1"
+              placeholder="发送消息给 WeekendAi"
+              aria-label="输入消息"
+            ></textarea>
+            <div class="composer-actions">
+              <div class="tool-row">
+                <button type="button" class="tool-button" data-prompt="帮我写一份产品发布计划">计划</button>
+                <button type="button" class="tool-button" data-prompt="总结这段文字的重点">总结</button>
+                <button type="button" class="tool-button" data-prompt="把下面内容改写得更专业">改写</button>
+              </div>
+              <button class="send-button" id="sendButton" type="submit" aria-label="发送">↑</button>
+            </div>
+          </form>
+          <p class="fine-print">AI 可能会出错。重要内容请核查。</p>
+        </section>
+      </main>
+    </div>
+
+    <div class="modal-backdrop" id="settingsModal" aria-hidden="true">
+      <section class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <div class="settings-head">
+          <div>
+            <h2 id="settingsTitle">模型设置</h2>
+            <p>选择模型商并配置 API 参数</p>
+          </div>
+          <button class="icon-button" id="closeSettings" aria-label="关闭设置">×</button>
+        </div>
+
+        <form class="settings-form" id="settingsForm">
+          <label>
+            <span>模型商</span>
+            <select id="providerSelect">
+              <option value="openai">OpenAI Responses</option>
+              <option value="compatible">OpenAI 兼容接口</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="qwen">Qwen / 阿里百炼</option>
+              <option value="minimax">MiniMax</option>
+              <option value="kimi">Kimi / Moonshot</option>
+              <option value="doubao">豆包 / 火山方舟</option>
+              <option value="zhipu">智谱 GLM</option>
+              <option value="anthropic">Anthropic Claude</option>
+              <option value="gemini">Google Gemini</option>
+            </select>
+          </label>
+
+          <label>
+            <span>API Key</span>
+            <input id="apiKeyInput" type="password" autocomplete="off" placeholder="只保存在当前浏览器本地" />
+          </label>
+
+          <label>
+            <span>模型名</span>
+            <input id="modelInput" type="text" placeholder="例如 gpt-4.1 或 deepseek-chat" />
+          </label>
+
+          <label>
+            <span>接口地址</span>
+            <input id="baseUrlInput" type="url" placeholder="默认使用所选模型商官方地址" />
+          </label>
+
+          <label>
+            <span>系统提示词</span>
+            <textarea id="systemPromptInput" rows="3"></textarea>
+          </label>
+
+          <div class="settings-actions">
+            <button type="button" class="footer-button" id="testSettingsButton">测试连接</button>
+            <button type="submit" class="new-chat">保存设置</button>
+          </div>
+          <p class="settings-note" id="settingsStatus">API Key 会保存在浏览器 localStorage，仅用于这个本地页面。</p>
+        </form>
+      </section>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
