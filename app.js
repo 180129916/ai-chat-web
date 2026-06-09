@@ -229,18 +229,19 @@ async function sendMessage(text) {
 
   messageInput.value = "";
   autoResizeInput();
-  isResponding = true;
-  userScrolledUp = false;
   saveState();
-  render();
 
   await streamResponse(chat);
 }
 
 async function streamResponse(chat) {
+  isResponding = true;
+  userScrolledUp = false;
+
   const payload = chat.messages.map((m) => ({ role: m.role, content: m.content }));
   const assistantMessage = { role: "assistant", content: "" };
   chat.messages.push(assistantMessage);
+  render();
   renderMessages();
 
   abortController = new AbortController();
