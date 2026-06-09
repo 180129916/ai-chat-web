@@ -22,7 +22,7 @@
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/YOUR_USERNAME/ai-chat-web.git
+git clone https://github.com/180129916/ai-chat-web.git
 cd ai-chat-web
 
 # 2. 创建环境变量文件（可选）
