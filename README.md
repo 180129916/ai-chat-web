@@ -13,6 +13,8 @@
 - **移动端适配** — 侧边栏抽屉式交互，小屏下布局自动调整
 - **零依赖前端** — 仅通过 CDN 引入 `marked.js` 做 Markdown 解析
 
+![主页](https://github.com/180129916/ai-chat-web/blob/master/weekend001.png)
+
 ## 前置要求
 
 - **Node.js >= 20**（无需额外安装 npm 包——服务端仅使用 Node 内置模块）
